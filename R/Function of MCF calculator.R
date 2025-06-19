@@ -1,9 +1,9 @@
 mcf_calculator <- function(
     T.sel,                 # length-12 ambient temps (°C)
-    f_Tmin,                # minimum manure temp (°C)
     rm_months,             # months emptied, e.g. c(4, 9)
     
     ## ---- defaults the user may override ----
+    f_Tmin = 1,            # minimum manure temp (°C)
     VS_Yr  = 10000,        # kg VS per year
     VS_LQD = 100,          # % of excreted VS that enters the tank
     B0     = 0.24,         # m³ CH4 kg⁻¹ VS

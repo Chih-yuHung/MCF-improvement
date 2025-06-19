@@ -7,12 +7,13 @@ output: html_document
 
 ```{r setup, include=FALSE}
 library(tidyverse)
-T.avg<-read.table("Inputs/monthly avg T.txt")
-Location <- read.csv("Inputs/MCF with locations.csv")
+library(purrr)
+T.avg<-read.table("../Inputs/monthly avg T.txt")
+Location <- read.csv("../Inputs/MCF with locations.csv")
+Removal_months <- read.csv("../Outputs/Month_removal_schedule.csv")
 
 
-
-source("R/Function of MCF calculator.R")
+source("Function of MCF calculator.R")
 
 ```
 
@@ -43,6 +44,57 @@ Location <- Location %>%
 Tavg_long <- Tavg_long %>%
   left_join(Location, by = "stationID")
 
+```
+
+
+```{r}
+# 1. reshape temperature to list of vectors per station
+station_temp <- Tavg_long %>%
+  arrange(stationID, Month) %>%
+  group_by(stationID) %>%
+  summarise(T.sel = list(Temperature), .groups = "drop")
+
+# 2. define scenarios
+scenario_list <- list(
+  Early_Spring  = function(row) c(row$Early_Spring),
+  Late_Spring   = function(row) c(row$Late_Spring),
+  Early_Fall    = function(row) c(row$Early_Fall),
+  Late_Fall     = function(row) c(row$Late_Fall),
+  EarlyFall_Spring = function(row) c(row$Early_Spring, row$Early_Fall),
+  LateFall_Spring  = function(row) c(row$Late_Spring, row$Late_Fall),
+  Spring_Aug_Fall  = function(row) c(row$Early_Spring, 8, row$Late_Fall)
+)
+
+# 3. compute MCFs
+results <- Removal_months %>%
+  rowwise() %>%
+  mutate(
+    MCF_Early_Spring  = mcf_calculator(T.sel = station_temp$T.sel[[which(station_temp$stationID == Station)]],
+                                      rm_months = scenario_list$Early_Spring(cur_data()))[["MCF"]],
+    MCF_Late_Spring   = mcf_calculator(T.sel = station_temp$T.sel[[which(station_temp$stationID == Station)]],
+                                      rm_months = scenario_list$Late_Spring(cur_data()))[["MCF"]],
+    MCF_Early_Fall    = mcf_calculator(T.sel = station_temp$T.sel[[which(station_temp$stationID == Station)]],
+                                      rm_months = scenario_list$Early_Fall(cur_data()))[["MCF"]],
+    MCF_Late_Fall     = mcf_calculator(T.sel = station_temp$T.sel[[which(station_temp$stationID == Station)]],
+                                      rm_months = scenario_list$Late_Fall(cur_data()))[["MCF"]],
+    MCF_Spring_EarlyFall = mcf_calculator(T.sel = station_temp$T.sel[[which(station_temp$stationID == Station)]],
+                                          rm_months = scenario_list$EarlyFall_Spring(cur_data()))[["MCF"]],
+    MCF_Spring_LateFall  = mcf_calculator(T.sel = station_temp$T.sel[[which(station_temp$stationID == Station)]],
+                                          rm_months = scenario_list$LateFall_Spring(cur_data()))[["MCF"]],
+    MCF_3removal          = mcf_calculator(T.sel = station_temp$T.sel[[which(station_temp$stationID == Station)]],
+                                           rm_months = scenario_list$Spring_Aug_Fall(cur_data()))[["MCF"]]
+  ) %>%
+  ungroup() %>%
+  select(
+    Station,
+    MCF_Early_Spring, MCF_Late_Spring, MCF_Early_Fall, MCF_Late_Fall,
+    MCF_Spring_EarlyFall, MCF_Spring_LateFall,
+    MCF_3removal
+  )
+
+# Print or write to CSV
+print(results)
+write.csv(results, "../Outputs/MCF_scenarios_output.csv", row.names = FALSE)
 
 
 ```
