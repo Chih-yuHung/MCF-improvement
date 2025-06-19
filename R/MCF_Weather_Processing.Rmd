@@ -1,0 +1,145 @@
+---
+title: "MCF_Weather_Processing"
+author: "Chih-Yu"
+date: "2025-06-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(data.table)
+library(tidyverse)
+```
+
+## 1. Daily average temperature 1981-2019
+
+```{r}
+main_dir <- "C:/ECCC/MCF/MCF-improvement/Inputs/SLC_Weather_WRH"
+station_folders <- list.dirs(main_dir, recursive = FALSE)
+
+station_results <- list()
+
+for (station_path in station_folders) {
+  station_name <- basename(station_path)
+  message("Processing: ", station_name)
+
+  file_list <- list.files(station_path, pattern = "\\.txt$", full.names = TRUE)
+
+  file_matrices <- lapply(file_list, function(f) {
+    dt <- tryCatch(fread(f, header = FALSE), error = function(e) return(NULL))
+    if (is.null(dt) || nrow(dt) < 365 || ncol(dt) < 3) return(NULL)
+    as.matrix(dt[1:365, .(V2, V3)])
+  })
+
+  file_matrices <- Filter(Negate(is.null), file_matrices)
+  if (length(file_matrices) == 0) next
+
+  array_data <- simplify2array(file_matrices)
+  avg_matrix <- apply(array_data, c(1, 2), mean, na.rm = TRUE)
+  final_vector <- rowMeans(avg_matrix)
+
+  station_results[[station_name]] <- final_vector
+}
+
+# Combine into one data frame
+station_df <- bind_rows(station_results, .id = "Station")
+
+# Add month labels (ignoring leap years)
+days_in_months <- c(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+month_labels <- rep(1:12, times = days_in_months)
+station_df$Month <- month_labels
+station_df <- station_df %>% relocate(Month)
+
+saveRDS(station_df, "../Inputs/Daily Weather.RDS")
+```
+
+## 2. Define Utility Functions for Seasonal Logic
+This section includes logic for identifying manure removal months based on temperature thresholds.(Hung et al., 2022)
+
+A. Early spring removal was set to themonth,which had the first occurrence
+of average daily air temperature above 5 °C. Exceptions were granted for
+locations in British Columbia, where the removal was set to April, otherwise
+the warmer climate could result in removals in January (five locations)
+or March (35 locations).
+B. Late spring removal was one month later than the early spring removal.
+C. Early fall removal was set to the month 45 d before the first day in fall to
+reach 0 °C. In the case of three removals per year, the summer removal
+was in August and the months of early spring and late fall were determined
+as mentioned above.
+D. Late fall removal was set to the first fall month with an average daily air
+temperature of 0 °C. If the average air temperature remained above 0 °C
+for the entire fall period, removal was set to November.
+
+
+
+```{r }
+months_vector <- station_df$Month
+
+get_first_month_over_5 <- function(values, months, min_month = 4) {
+  idx <- which(values >= 5)[1]
+  if (is.na(idx)) return(min_month)
+  return(max(months[idx], min_month))
+}
+
+get_late_spring_month <- function(values, early_spring_day, months) {
+  idx <- early_spring_day + 30
+  if (idx > length(months)) idx <- length(months)
+  return(months[idx])
+}
+
+get_early_fall_month <- function(values, months) {
+  idx_start <- which(months >= 9)[1]
+  idx_cold <- which(values[idx_start:length(values)] <= 0)[1]
+  if (is.na(idx_cold)) return(9)
+  idx_cold_absolute <- idx_start + idx_cold - 1
+  idx_early_fall <- max(1, idx_cold_absolute - 45)
+  return(months[idx_early_fall])
+}
+
+get_late_fall_month <- function(values, months) {
+  idx_start <- which(months >= 9)[1]
+  idx_cold <- which(values[idx_start:length(values)] <= 0)[1]
+  if (is.na(idx_cold)) return(11)
+  return(months[idx_start + idx_cold - 1])
+}
+
+```
+
+## 3. Determine Removal Months for Each Station
+We now apply the rules to generate the removal schedule for early/late spring and early/late fall.
+
+
+```{r }
+Month_removal <- tibble(
+  Station = colnames(station_df)[-1],
+  Early_Spring = NA_integer_,
+  Late_Spring = NA_integer_,
+  Early_Fall = NA_integer_,
+  Late_Fall = NA_integer_
+)
+
+for (i in seq_along(Month_removal$Station)) {
+  station <- Month_removal$Station[i]
+  values <- station_df[[station]]
+
+  idx_early_spring <- which(values >= 5)[1]
+  if (is.na(idx_early_spring)) idx_early_spring <- which(months_vector == 4)[1]
+  early_spring_month <- max(months_vector[idx_early_spring], 4)
+
+  late_spring_month <- get_late_spring_month(values, idx_early_spring, months_vector)
+  early_fall_month <- get_early_fall_month(values, months_vector)
+  late_fall_month <- get_late_fall_month(values, months_vector)
+
+  Month_removal$Early_Spring[i] <- early_spring_month
+  Month_removal$Late_Spring[i]  <- late_spring_month
+  Month_removal$Early_Fall[i]   <- early_fall_month
+  Month_removal$Late_Fall[i]    <- late_fall_month
+}
+
+
+
+#Save results
+write_csv(Month_removal, "../Outputs/Month_removal_schedule.csv")
+```
+
+
