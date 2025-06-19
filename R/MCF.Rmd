@@ -1,0 +1,48 @@
+---
+title: "MCF"
+author: "Dr. Chih-Yu Hung"
+date: "2025-06-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+T.avg<-read.table("Inputs/monthly avg T.txt")
+Location <- read.csv("Inputs/MCF with locations.csv")
+
+
+
+source("R/Function of MCF calculator.R")
+
+```
+
+## Rerun to obtain MCF
+
+```{r MCF One removal in spring }
+Tavg_long <- T.avg %>% 
+  mutate(Month = row_number()) %>%       # keep a row index (optional)
+  pivot_longer(
+    -Month,                             # everything except the index → long
+    names_to  = "stationID",              # column names become “Probe”
+    values_to = "Temperature",              # cell entries become “Value”
+    values_drop_na = TRUE             # omit missing cells if any
+  )
+
+Location <- Location %>% 
+  mutate(
+    stationID = paste0("P", stationID),
+    # trim leading/trailing spaces, squeeze internal ones, then uppercase
+    Prov = str_to_upper(str_squish(p)),
+    Prov = case_when(
+      Prov == "ME" ~ "NB",
+      TRUE         ~ Prov
+      )
+    ) %>%
+  select(stationID, Prov)
+
+Tavg_long <- Tavg_long %>%
+  left_join(Location, by = "stationID")
+
+
+
+```
